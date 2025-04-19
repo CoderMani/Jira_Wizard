@@ -12,6 +12,22 @@ import logging
 # Set up logging
 logging.basicConfig(filename='export_log.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+# Define categories
+app_keys = ["PSA", "ONBP", "ESW", "GOTH", "KARN", "PSDR", "WJA", "VBTP", "UFDJ", "SSWS", "AIOA", "AIOI", "FUTS", "HLSN", "SWQASIER", "HPXA", "HPSM", "AIOS"]
+cloud_keys = ["VIRATCLD", "SMRTM", "HPPKCHLS", "HP1OBC", "HP1BUG", "JSHE","ONBP","SDAS","STPI","CONV","DOSD","YETI","WSEA","WPPP","WPPI","WPPG","Vira","UCDE","SRTC","SOFT","SMTS","SMBP","ACTL","CSOR","IIBY","QQIO","HPC3","PRTB","OWS","ODPS","OMFE","IICR","CIOS","OMEF","OLEX","ONBP"]  # Add actual cloud keys here
+fw_keys = ["LOWINKFW", "SRFW","DUNE","SMBF"]  # Add actual firmware keys here
+
+# Function to categorize issues into App, Cloud, FW
+def categorize_issue_key(issue_key): 
+    if any(issue_key.startswith(prefix) for prefix in app_keys):
+        return "App"
+    elif any(issue_key.startswith(prefix) for prefix in cloud_keys):
+        return "Cloud"
+    elif any(issue_key.startswith(prefix) for prefix in fw_keys):
+        return "FW"
+    else:
+        return "Other"
+
 # Function to save credentials to a file
 def save_credentials():
     credentials = {
@@ -205,8 +221,11 @@ def export_issues():
         # Filter issues with [BLOCK] or [Block] in the summary
         df['Blocker'] = df['Summary'].apply(lambda x: '[BLOCK]' in x or '[Block]' in x)
         
+        # Categorize issues into App, Cloud, FW
+        df['Blocker Category'] = df['Key'].apply(categorize_issue_key)
+        
         # Generate pivot table for Blockers with Created dates categorized in Quarters
-        blockers_pivot_table = pd.pivot_table(df[df['Blocker']], values='Key', index=['Blocker'], columns=['Quarter'], aggfunc='count', fill_value=0)
+        blockers_pivot_table = pd.pivot_table(df[df['Blocker']], values='Key', index=['Blocker Category'], columns=['Quarter'], aggfunc='count', fill_value=0)
         
         # Categorize Bug Resolution values
         df['Bug Resolution Category'] = df.apply(lambda row: categorize_bug_resolution(row['Bug Resolution'], row['Status']), axis=1)
@@ -245,10 +264,8 @@ def select_all_fields(select):
 root = tk.Tk()
 root.title("Jira Wizard")
 root.iconbitmap(default=None) # Remove default Tkinter window icon
-
 # Set default window size based on overall elements listed
 root.geometry("800x600")
-
 # Add scrollbars where necessary
 main_frame = ttk.Frame(root)
 main_frame.pack(fill=tk.BOTH, expand=True)
@@ -259,16 +276,12 @@ canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 canvas.configure(yscrollcommand=scrollbar.set)
 scrollable_frame = ttk.Frame(canvas)
 canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-
 def on_resize(event):
     canvas.configure(scrollregion=canvas.bbox("all"))
-
 scrollable_frame.bind("<Configure>", on_resize)
-
 # Enable scrolling with mouse wheel
 def on_mouse_wheel(event):
     canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-
 canvas.bind_all("<MouseWheel>", on_mouse_wheel)
 
 # Section 1: URL, Username, Auth-Token, JQL
@@ -329,10 +342,10 @@ progress_bar.grid(row=0, column=1, padx=5, pady=5)
 section7 = ttk.LabelFrame(scrollable_frame, text="About Jira Wizard")
 section7.grid(row=6, column=0, padx=10, pady=10, sticky="ew")
 description = """Ever wished you could magically teleport your Jira issues into an Excel sheet without the browser drama and PingID acrobatics?
-✨ 
+
 Well, your wish is granted! Introducing new tool that does just that! Say goodbye to endless logins and hello to instant exports. It's like having a personal Jira wizard at your service!.
  
-Dev By: Maninder Singh\nVersion: 1.0.0"""
+Dev By: Maninder Singh\nVersion: 1.0.1"""
 ttk.Label(section7, text=description, wraplength=400).grid(row=0, column=0, padx=5, pady=5)
 
 # Load credentials on startup
