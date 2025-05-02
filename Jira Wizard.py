@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 import time
 from openpyxl import load_workbook
 import logging
+import threading
 
 # Set up logging
 logging.basicConfig(filename='export_log.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -18,7 +19,7 @@ cloud_keys = ["VIRATCLD", "SMRTM", "HPPKCHLS", "HP1OBC", "HP1BUG", "JSHE","ONBP"
 fw_keys = ["LOWINKFW", "SRFW","DUNE","SMBF"]  # Add actual firmware keys here
 
 # Function to categorize issues into App, Cloud, FW
-def categorize_issue_key(issue_key): 
+def categorize_issue_key(issue_key):
     if any(issue_key.startswith(prefix) for prefix in app_keys):
         return "App"
     elif any(issue_key.startswith(prefix) for prefix in cloud_keys):
@@ -88,172 +89,226 @@ def categorize_bug_resolution(value, status):
     else:
         return "Other"
 
+# Function to validate credentials
+def validate_credentials():
+    if not url_entry.get():
+        messagebox.showerror("Error", "Jira URL is required.")
+        return False
+    if not username_entry.get():
+        messagebox.showerror("Error", "Username is required.")
+        return False
+    if not auth_token_entry.get():
+        messagebox.showerror("Error", "Auth-Token is required.")
+        return False
+    if not jql_entry.get("1.0", tk.END).strip():
+        messagebox.showerror("Error", "JQL query is required.")
+        return False
+    return True
+
+# Function to check if a label is ET-related
+def is_et_label(label):
+    et_patterns = ['[HSV-ET]', '[ET]', 'Exploratory']
+    return any(pattern.lower() in label.lower() for pattern in et_patterns)
+
+# Function to check if How Found is ET-related
+def is_et_how_found(how_found):
+    return how_found == 'Test: Exploratory'
+
 # Function to export issues based on user input
 def export_issues():
-    try:
-        # Create a progress bar
-        progress_var.set(0)
-        progress_bar.grid(row=0, column=1, padx=5, pady=5)
-        logging.info("Export process started.")
-        
-        # Save credentials
-        save_credentials()
-        
-        # Update progress bar for authentication
-        progress_var.set(10)
-        progress_bar.update()
-        
-        # Load credentials from user input
-        jira_server = url_entry.get()
-        jira_user = username_entry.get()
-        jira_api_token = auth_token_entry.get()
-        jql_query = jql_entry.get("1.0", tk.END).strip()
-        
-        # Connect to Jira
-        jira = JIRA(server=jira_server, basic_auth=(jira_user, jira_api_token))
-        logging.info("Connected to Jira successfully.")
-        
-        # Update progress bar for Jira issues search
-        progress_var.set(30)
-        progress_bar.update()
-        
-        # Fetch issues from Jira
-        issues = jira.search_issues(jql_query, maxResults=False)
-        logging.info(f"Fetched {len(issues)} issues from Jira.")
-        
-        # Update progress bar for field values extraction
-        progress_var.set(50)
-        progress_bar.update()
-        
-        # Extract issue details
-        issue_data = []
-        total_issues = len(issues)
-        start_time = time.time()
-        for idx, issue in enumerate(issues):
-            if open_issues_var.get() and issue.fields.status.name in ["Closed", "Accepted"]:
-                continue
-            created_date = datetime.strptime(issue.fields.created[:10], '%Y-%m-%d').strftime('%m-%d-%Y')
-            updated_date = datetime.strptime(issue.fields.updated[:10], '%Y-%m-%d').strftime('%m-%d-%Y')
-            severity_field = getattr(issue.fields, 'customfield_10605', None)
-            severity_text = severity_field.value if severity_field else ''
-            applicable_product_field = getattr(issue.fields, 'customfield_13550', None)
-            applicable_product_text = ', '.join([product.value for product in applicable_product_field]) if applicable_product_field else ''
-            bug_resolution_field = getattr(issue.fields, 'customfield_13555', None)
-            bug_resolution_text = bug_resolution_field.value if bug_resolution_field else ''
-            fixed_in_build_field = getattr(issue.fields, 'customfield_11412', None)
-            fixed_in_build_text = fixed_in_build_field if fixed_in_build_field else ''
-            encountered_by_field = getattr(issue.fields, 'customfield_13073', None)
-            encountered_by_text = encountered_by_field.value if encountered_by_field else ''
-            team_watch_list_field = getattr(issue.fields, 'customfield_31502', None)
-            team_watch_list_text = ', '.join([team.value for team in team_watch_list_field]) if team_watch_list_field else ''
-            deferred_products_field = getattr(issue.fields, 'customfield_16203', None)
-            deferred_products_text = ', '.join([product.value for product in deferred_products_field]) if deferred_products_field else ''
-            how_found_field = getattr(issue.fields, 'customfield_12900', None)
-            how_found_text = how_found_field.value if how_found_field else ''
-            found_in_fw_version_field = getattr(issue.fields, 'customfield_11405', None)
-            found_in_fw_version_text = found_in_fw_version_field if found_in_fw_version_field else ''
-            reproducibility_field = getattr(issue.fields, 'customfield_11408', None)
-            reproducibility_text = reproducibility_field.value if reproducibility_field else ''
-            resolved_date_field = getattr(issue.fields, 'resolutiondate', None)
-            resolved_date_value = datetime.strptime(resolved_date_field[:10], '%Y-%m-%d').strftime('%m-%d-%Y') if resolved_date_field else ''
-            issue_links = []
-            for link in issue.fields.issuelinks:
-                if hasattr(link, 'outwardIssue'):
-                    link_html = f'<a href="/browse/{link.outwardIssue.key}" data-issue-key="{link.outwardIssue.key}" class="issue-link link-title">{link.outwardIssue.key}</a>'
-                elif hasattr(link, 'inwardIssue'):
-                    link_html = f'<a href="/browse/{link.inwardIssue.key}" data-issue-key="{link.inwardIssue.key}" class="issue-link link-title">{link.inwardIssue.key}</a>'
-                else:
-                    link_html = ''
-                soup = BeautifulSoup(link_html, 'html.parser')
-                link_element = soup.find('a')
-                link_title = link_element['title'] if link_element and 'title' in link_element.attrs else link_element.get_text(strip=True)
-                issue_links.append(link_title)
-            issue_links_text = ', '.join(issue_links)
-            issue_dict = {
-                'Key': issue.key,
-                'Summary': issue.fields.summary,
-                'Status': issue.fields.status.name,
-                'Assignee': issue.fields.assignee.displayName if issue.fields.assignee else 'Unassigned',
-                'Reporter': issue.fields.reporter.displayName,
-                'Created': created_date,
-                'Updated': updated_date,
-                'Priority': issue.fields.priority.name if issue.fields.priority else '',
-                'Issue Type': issue.fields.issuetype.name,
-                'Labels': ', '.join(issue.fields.labels),
-                'Project': issue.fields.project.name,
-                'Severity': severity_text,
-                'Applicable Products': applicable_product_text,
-                'Bug Resolution': bug_resolution_text,
-                'Fixed in Build': fixed_in_build_text,
-                'Encountered By': encountered_by_text,
-                'Team Watch List': team_watch_list_text,
-                'Deferred Products': deferred_products_text,
-                'How Found': how_found_text,
-                'Found in FW Version': found_in_fw_version_text,
-                'Reproducibility': reproducibility_text,
-                'Issue Links': issue_links_text,
-                'Resolved': resolved_date_value
-            }
-            # Filter issue_dict based on selected fields
-            filtered_issue_dict = {key: value for key, value in issue_dict.items() if field_vars[fields.index(key)].get()}
-            issue_data.append(filtered_issue_dict)
-            # Update progress bar
-            progress_var.set(50 + (idx + 1) / total_issues * 50)
+    if not validate_credentials():
+        return
+
+    def run_export():
+        try:
+            # Create a progress bar
+            progress_var.set(0)
+            progress_bar.grid(row=0, column=1, padx=5, pady=5)
+            logging.info("Export process started.")
+            
+            # Save credentials
+            save_credentials()
+            
+            # Update progress bar for authentication
+            progress_var.set(10)
             progress_bar.update()
-        
-        # Create a DataFrame from the issue data
-        df = pd.DataFrame(issue_data)
-        
-        # Categorize issues by quarters
-        df['Quarter'] = df['Created'].apply(categorize_quarters)
-        
-        # Rename Severity levels
-        df['Severity'] = df['Severity'].replace({
-            'Critical': '1 Critical',
-            'High': '2 High',
-            'Medium': '3 Medium',
-            'Low': '4 Low'
-        })
-        
-        # Generate pivot table for Severity with Created dates categorized in Quarters
-        severity_pivot_table = pd.pivot_table(df, values='Key', index=['Severity'], columns=['Quarter'], aggfunc='count', fill_value=0)
-        
-        # Filter issues with [BLOCK] or [Block] in the summary
-        df['Blocker'] = df['Summary'].apply(lambda x: '[BLOCK]' in x or '[Block]' in x)
-        
-        # Categorize issues into App, Cloud, FW
-        df['Blocker Category'] = df['Key'].apply(categorize_issue_key)
-        
-        # Generate pivot table for Blockers with Created dates categorized in Quarters
-        blockers_pivot_table = pd.pivot_table(df[df['Blocker']], values='Key', index=['Blocker Category'], columns=['Quarter'], aggfunc='count', fill_value=0)
-        
-        # Categorize Bug Resolution values
-        df['Bug Resolution Category'] = df.apply(lambda row: categorize_bug_resolution(row['Bug Resolution'], row['Status']), axis=1)
-        
-        # Generate pivot table for Bug Resolution with Created dates categorized in Quarters
-        bug_resolution_pivot_table = pd.pivot_table(df, values='Key', index=['Bug Resolution Category'], columns=['Quarter'], aggfunc='count', fill_value=0)
-        
-        # Generate a timestamped file name
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        excel_file = f'jira_issues_{timestamp}.xlsx'
-        
-        # Export the DataFrame and pivot tables to an Excel sheet
-        with pd.ExcelWriter(excel_file) as writer:
-            df.to_excel(writer, sheet_name='Issues', index=False)
-            if severity_var.get():
-                severity_pivot_table.to_excel(writer, sheet_name='Severity')
-            if blockers_var.get():
-                blockers_pivot_table.to_excel(writer, sheet_name='Blockers')
-            if bug_resolution_var.get():
-                bug_resolution_pivot_table.to_excel(writer, sheet_name='Bug Resolution')
-        
-        progress_bar.grid_forget()
-        logging.info("Export process completed successfully.")
-        messagebox.showinfo("Success", f"Issues exported to {excel_file} with selected pivot tables")
-    except Exception as e:
-        progress_bar.grid_forget()
-        logging.error(f"Error during export process: {str(e)}")
-        messagebox.showerror("Error", str(e))
+            
+            # Load credentials from user input
+            jira_server = url_entry.get()
+            jira_user = username_entry.get()
+            jira_api_token = auth_token_entry.get()
+            jql_query = jql_entry.get("1.0", tk.END).strip()
+            
+            # Connect to Jira
+            jira = JIRA(server=jira_server, basic_auth=(jira_user, jira_api_token))
+            logging.info("Connected to Jira successfully.")
+            
+            # Update progress bar for Jira issues search
+            progress_var.set(30)
+            progress_bar.update()
+            
+            # Fetch issues from Jira
+            issues = jira.search_issues(jql_query, maxResults=False)
+            logging.info(f"Fetched {len(issues)} issues from Jira.")
+            
+            # Update progress bar for field values extraction
+            progress_var.set(50)
+            progress_bar.update()
+            
+            # Extract issue details
+            issue_data = []
+            total_issues = len(issues)
+            start_time = time.time()
+            for idx, issue in enumerate(issues):
+                if open_issues_var.get() and issue.fields.status.name in ["Closed", "Accepted"]:
+                    continue
+                created_date = datetime.strptime(issue.fields.created[:10], '%Y-%m-%d').strftime('%m-%d-%Y')
+                updated_date = datetime.strptime(issue.fields.updated[:10], '%Y-%m-%d').strftime('%m-%d-%Y')
+                severity_field = getattr(issue.fields, 'customfield_10605', None)
+                severity_text = severity_field.value if severity_field else ''
+                applicable_product_field = getattr(issue.fields, 'customfield_13550', None)
+                applicable_product_text = ', '.join([product.value for product in applicable_product_field]) if applicable_product_field else ''
+                bug_resolution_field = getattr(issue.fields, 'customfield_13555', None)
+                bug_resolution_text = bug_resolution_field.value if bug_resolution_field else ''
+                fixed_in_build_field = getattr(issue.fields, 'customfield_11412', None)
+                fixed_in_build_text = fixed_in_build_field if fixed_in_build_field else ''
+                encountered_by_field = getattr(issue.fields, 'customfield_13073', None)
+                encountered_by_text = encountered_by_field.value if encountered_by_field else ''
+                team_watch_list_field = getattr(issue.fields, 'customfield_31502', None)
+                team_watch_list_text = ', '.join([team.value for team in team_watch_list_field]) if team_watch_list_field else ''
+                deferred_products_field = getattr(issue.fields, 'customfield_16203', None)
+                deferred_products_text = ', '.join([product.value for product in deferred_products_field]) if deferred_products_field else ''
+                how_found_field = getattr(issue.fields, 'customfield_12900', None)
+                how_found_text = how_found_field.value if how_found_field else ''
+                found_in_fw_version_field = getattr(issue.fields, 'customfield_11405', None)
+                found_in_fw_version_text = found_in_fw_version_field if found_in_fw_version_field else ''
+                reproducibility_field = getattr(issue.fields, 'customfield_11408', None)
+                reproducibility_text = reproducibility_field.value if reproducibility_field else ''
+                resolved_date_field = getattr(issue.fields, 'resolutiondate', None)
+                resolved_date_value = datetime.strptime(resolved_date_field[:10], '%Y-%m-%d').strftime('%m-%d-%Y') if resolved_date_field else ''
+                issue_links = []
+                for link in issue.fields.issuelinks:
+                    if hasattr(link, 'outwardIssue'):
+                        link_html = f'<a href="/browse/{link.outwardIssue.key}" data-issue-key="{link.outwardIssue.key}" class="issue-link link-title">{link.outwardIssue.key}</a>'
+                    elif hasattr(link, 'inwardIssue'):
+                        link_html = f'<a href="/browse/{link.inwardIssue.key}" data-issue-key="{link.inwardIssue.key}" class="issue-link link-title">{link.inwardIssue.key}</a>'
+                    else:
+                        link_html = ''
+                    soup = BeautifulSoup(link_html, 'html.parser')
+                    link_element = soup.find('a')
+                    link_title = link_element['title'] if link_element and 'title' in link_element.attrs else link_element.get_text(strip=True)
+                    issue_links.append(link_title)
+                issue_links_text = ', '.join(issue_links)
+                issue_dict = {
+                    'Key': issue.key,
+                    'Summary': issue.fields.summary,
+                    'Status': issue.fields.status.name,
+                    'Assignee': issue.fields.assignee.displayName if issue.fields.assignee else 'Unassigned',
+                    'Reporter': issue.fields.reporter.displayName,
+                    'Created': created_date,
+                    'Updated': updated_date,
+                    'Priority': issue.fields.priority.name if issue.fields.priority else '',
+                    'Issue Type': issue.fields.issuetype.name,
+                    'Labels': ', '.join(issue.fields.labels),
+                    'Project': issue.fields.project.name,
+                    'Severity': severity_text,
+                    'Applicable Products': applicable_product_text,
+                    'Bug Resolution': bug_resolution_text,
+                    'Fixed in Build': fixed_in_build_text,
+                    'Encountered By': encountered_by_text,
+                    'Team Watch List': team_watch_list_text,
+                    'Deferred Products': deferred_products_text,
+                    'How Found': how_found_text,
+                    'Found in FW Version': found_in_fw_version_text,
+                    'Reproducibility': reproducibility_text,
+                    'Issue Links': issue_links_text,
+                    'Resolved': resolved_date_value
+                }
+                # Filter issue_dict based on selected fields
+                filtered_issue_dict = {key: value for key, value in issue_dict.items() if field_vars[fields.index(key)].get()}
+                issue_data.append(filtered_issue_dict)
+                # Update progress bar
+                progress_var.set(50 + (idx + 1) / total_issues * 50)
+                progress_bar.update()
+            
+            # Create a DataFrame from the issue data
+            df = pd.DataFrame(issue_data)
+            
+            # Categorize issues by quarters
+            df['Quarter'] = df['Created'].apply(categorize_quarters)
+            
+            # Rename Severity levels
+            df['Severity'] = df['Severity'].replace({
+                'Critical': '1 Critical',
+                'High': '2 High',
+                'Medium': '3 Medium',
+                'Low': '4 Low'
+            })
+            
+            # Generate pivot table for Severity with Created dates categorized in Quarters
+            severity_pivot_table = pd.pivot_table(df, values='Key', index=['Severity'], columns=['Quarter'], aggfunc='count', fill_value=0)
+            
+            # Filter issues with [BLOCK] or [Block] in the summary
+            df['Blocker'] = df['Summary'].apply(lambda x: '[BLOCK]' in x or '[Block]' in x)
+            
+            # Categorize issues into App, Cloud, FW
+            df['Blocker Category'] = df['Key'].apply(categorize_issue_key)
+            
+            # Generate pivot table for Blockers with Created dates categorized in Quarters
+            blockers_pivot_table = pd.pivot_table(df[df['Blocker']], values='Key', index=['Blocker Category'], columns=['Quarter'], aggfunc='count', fill_value=0)
+            
+            # Categorize Bug Resolution values
+            df['Bug Resolution Category'] = df.apply(lambda row: categorize_bug_resolution(row['Bug Resolution'], row['Status']), axis=1)
+            
+            # Generate pivot table for Bug Resolution with Created dates categorized in Quarters
+            bug_resolution_pivot_table = pd.pivot_table(df, values='Key', index=['Bug Resolution Category'], columns=['Quarter'], aggfunc='count', fill_value=0)
+            
+            # Filter exploratory defects considering both How Found and Labels
+            df['Exploratory Defect'] = df.apply(
+                lambda row: (
+                    is_et_how_found(row['How Found']) or
+                    any(is_et_label(label.strip()) for label in row['Labels'].split(',') if label.strip())
+                ),
+                axis=1
+            )
+
+            # Generate pivot table for Exploratory Defects
+            exploratory_defects_pivot_table = pd.pivot_table(
+                df[df['Exploratory Defect']], 
+                values='Key',
+                index=['How Found'],
+                columns=['Quarter'],
+                aggfunc='count',
+                fill_value=0,
+                margins=True
+            )
+            
+            # Generate a timestamped file name
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            excel_file = f'jira_issues_{timestamp}.xlsx'
+            
+            # Export the DataFrame and pivot tables to an Excel sheet
+            with pd.ExcelWriter(excel_file) as writer:
+                df.to_excel(writer, sheet_name='Issues', index=False)
+                if severity_var.get():
+                    severity_pivot_table.to_excel(writer, sheet_name='Severity')
+                if blockers_var.get():
+                    blockers_pivot_table.to_excel(writer, sheet_name='Blockers')
+                if bug_resolution_var.get():
+                    bug_resolution_pivot_table.to_excel(writer, sheet_name='Bug Resolution')
+                if exploratory_defects_var.get():
+                    exploratory_defects_pivot_table.to_excel(writer, sheet_name='Exploratory Defects')
+            
+            progress_bar.grid_forget()
+            logging.info("Export process completed successfully.")
+            messagebox.showinfo("Success", f"Issues exported to {excel_file} with selected pivot tables")
+        except Exception as e:
+            progress_bar.grid_forget()
+            logging.error(f"Error during export process: {str(e)}")
+            messagebox.showerror("Error", str(e))
+
+    # Run the export process in a separate thread to prevent GUI freezing
+    threading.Thread(target=run_export).start()
 
 # Function to select/unselect all fields
 def select_all_fields(select):
@@ -326,9 +381,11 @@ section5.grid(row=4, column=0, padx=10, pady=10, sticky="ew")
 severity_var = tk.BooleanVar(value=True)
 blockers_var = tk.BooleanVar(value=True)
 bug_resolution_var = tk.BooleanVar(value=True)
+exploratory_defects_var = tk.BooleanVar(value=True)
 ttk.Checkbutton(section5, text="Severity", variable=severity_var).grid(row=0, column=0, padx=5, pady=5, sticky="w")
 ttk.Checkbutton(section5, text="Blockers", variable=blockers_var).grid(row=0, column=1, padx=5, pady=5, sticky="w")
 ttk.Checkbutton(section5, text="Bug Resolution", variable=bug_resolution_var).grid(row=0, column=2, padx=5, pady=5, sticky="w")
+ttk.Checkbutton(section5, text="Exploratory Defects", variable=exploratory_defects_var).grid(row=0, column=3, padx=5, pady=5, sticky="w")
 
 # Section 6: Export Button and Progress Bar
 section6 = ttk.LabelFrame(scrollable_frame, text="Export into Excel")
