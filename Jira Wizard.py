@@ -14,8 +14,8 @@ import threading
 logging.basicConfig(filename='export_log.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Define categories
-app_keys = ["PSA", "ONBP", "ESW", "GOTH", "KARN", "PSDR", "WJA", "VBTP", "UFDJ", "SSWS", "AIOA", "AIOI", "FUTS", "HLSN", "SWQASIER", "HPXA", "HPSM", "AIOS"]
-cloud_keys = ["VIRATCLD", "SMRTM", "HPPKCHLS", "HP1OBC", "HP1BUG", "JSHE","ONBP","SDAS","STPI","CONV","DOSD","YETI","WSEA","WPPP","WPPI","WPPG","Vira","UCDE","SRTC","SOFT","SMTS","SMBP","ACTL","CSOR","IIBY","QQIO","HPC3","PRTB","OWS","ODPS","OMFE","IICR","CIOS","OMEF","OLEX","ONBP"]  # Add actual cloud keys here
+app_keys = ["AIART", "PSA", "ONBP", "ESW", "GOTH", "KARN", "PSDR", "WJA", "VBTP", "UFDJ", "SSWS", "AIOA", "AIOI", "FUTS", "HLSN", "SWQASIER", "HPXA", "HPSM", "AIOS"] # Add actual Apps keys here
+cloud_keys = ["PCES", "VIRATCLD", "SMRTM", "HPPKCHLS", "HP1OBC", "HP1BUG", "JSHE","ONBP","SDAS","STPI","CONV","DOSD","YETI","WSEA","WPPP","WPPI","WPPG","Vira","UCDE","SRTC","SOFT","SMTS","SMBP","ACTL","CSOR","IIBY","QQIO","HPC3","PRTB","OWS","ODPS","OMFE","IICR","CIOS","OMEF","OLEX","ONBP"]  # Add actual cloud keys here
 fw_keys = ["LOWINKFW", "SRFW","DUNE","SMBF"]  # Add actual firmware keys here
 
 # Function to categorize issues into App, Cloud, FW
@@ -69,8 +69,8 @@ def categorize_quarters(date_str):
 
 # Function to categorize Bug Resolution values
 def categorize_bug_resolution(value, status):
-    fixed_code_change = ["Transfer: HP External", "Root Cause Unknown: Best Guess Change", "No Change: Defer-Change Known", "Incomplete Cleanup", "Delete Success", "Code Change", "No Change: Defer-Change Unknown", "Will Never Fix", "Requirement Specification Change", "No Change: Will Never Fix", "Fixed: Unknown Code change", "Fixed: Unknown Code change", "Fixed: Partner Change", "Cross Team Code change", "Fixed: by Earlier Fix", "Fixed: Code/Build Change", "Fixed: Code/Build Change due to Design/Spec Change", "Fixed: Code Change", "Fixed: Code Change - Partner API Impact", "Fixed: Configuration Change", "Fixed: Database Change", "Fixed: Design Change", "Fixed: Design Changed", "Fixed: Documentation Change", "Fixed: Engine Change", "Fixed: Firmware Change", "Fixed: Hardware Change", "Fixed: Infrastructure Change", "Unknown", "Code Change Out of Scope", "Deployed", "New Requirement", "Other: See Comment", "Tool Change", "Transfer: HP Internal", "Unknown", "Service unavailability"]
-    nad = ["Not a defect - As designed", "Not a defect - As designed", "Need More Information", "Not Our Defect", "Not a Defect", "Not Our Defect", "Feature Dropped", "Not a Defect: Other", "Not a Defect: As Designed", "Not a Defect: App/OS Error", "Not a Defect: Feature Not Ready", "Not a Defect: Design Limitation"]
+    fixed_code_change = ["New requirement", "Transfer: HP External", "Root Cause Unknown: Best Guess Change", "No Change: Defer-Change Known", "Incomplete Cleanup", "Delete Success", "Code Change", "No Change: Defer-Change Unknown", "Will Never Fix", "Requirement Specification Change", "No Change: Will Never Fix", "Fixed: Unknown Code change", "Fixed: Unknown Code change", "Fixed: Partner Change", "Cross Team Code change", "Fixed: by Earlier Fix", "Fixed: Code/Build Change", "Fixed: Code/Build Change due to Design/Spec Change", "Fixed: Code Change", "Fixed: Code Change - Partner API Impact", "Fixed: Configuration Change", "Fixed: Database Change", "Fixed: Design Change", "Fixed: Design Changed", "Fixed: Documentation Change", "Fixed: Engine Change", "Fixed: Firmware Change", "Fixed: Hardware Change", "Fixed: Infrastructure Change", "Unknown", "Code Change Out of Scope", "Deployed", "New Requirement", "Other: See Comment", "Tool Change", "Transfer: HP Internal", "Unknown", "Service unavailability"]
+    nad = ["No Change: Defer-Schedule Unknown", "Not a defect - As designed", "Need More Information", "Not Our Defect", "Not a Defect", "Not Our Defect", "Feature Dropped", "Not a Defect: Other", "Not a Defect: As Designed", "Not a Defect: App/OS Error", "Not a Defect: Feature Not Ready", "Not a Defect: Design Limitation"]
     cannot_reproduce = ["Cannot Reproduce", "Root Cause Unknown: Cannot Reproduce"]
     duplicate = ["Duplicate", "Duplicate: of Bug"]
     false_defect = ["No Change: Defer-Test Issue", "Test: Test/Build Mismatch", "Test: Test Case Error", "Test: Test Change", "Test: Test Env Error", "Test Setup Error", "Partner Education", "Partner setup issue", "External Error: Incorrect Testing", "Invalid", "Submission Error"]
@@ -283,6 +283,10 @@ def export_issues():
                 margins=True
             )
             
+            
+            # Generate Month Wise Defects pivot table
+            df['Created Month'] = pd.to_datetime(df['Created'], format='%m-%d-%Y').dt.strftime('%Y-%m')
+            month_wise_defects = pd.pivot_table(df, values='Key', index='Created Month', aggfunc='count')
             # Generate a timestamped file name
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             excel_file = f'jira_issues_{timestamp}.xlsx'
@@ -299,7 +303,8 @@ def export_issues():
                 if exploratory_defects_var.get():
                     exploratory_defects_pivot_table.to_excel(writer, sheet_name='Exploratory Defects')
             
-            progress_bar.grid_forget()
+                month_wise_defects.to_excel(writer, sheet_name='Month Wise Defects')
+                progress_bar.grid_forget()
             logging.info("Export process completed successfully.")
             messagebox.showinfo("Success", f"Issues exported to {excel_file} with selected pivot tables")
         except Exception as e:
